@@ -67,6 +67,7 @@ export enum TransferType {
   Upload,
   Download,
   Copy,
+  Move,
 }
 
 export type IpcGetFps = (deviceId: string, pkg: string) => Promise<number>

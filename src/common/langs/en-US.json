@@ -106,6 +106,7 @@
   "rename": "Rename",
   "copy": "Copy",
   "cut": "Cut",
+  "move": "Move",
   "paste": "Paste",
   "fileCopied": "Copied {{name}}",
   "fileCut": "Cut {{name}}",

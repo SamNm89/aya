@@ -106,6 +106,7 @@
   "rename": "重命名",
   "copy": "复制",
   "cut": "剪切",
+  "move": "移动",
   "paste": "粘贴",
   "fileCopied": "已复制 {{name}}",
   "fileCut": "已剪切 {{name}}",

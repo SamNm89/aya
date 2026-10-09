@@ -28,6 +28,8 @@ export default observer(function Transfer() {
           ? t('download')
           : transfer.type === TransferType.Copy
           ? t('copy')
+          : transfer.type === TransferType.Move
+          ? t('move')
           : t('upload'),
       source: transfer.src,
       destination: transfer.dest,
