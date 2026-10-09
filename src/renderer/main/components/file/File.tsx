@@ -80,12 +80,57 @@ export default observer(function File() {
     return false
   }
 
-  function getCopyName(name: string, isDir: boolean) {
-    if (isDir) {
-      return `${name} (copy)`
+  async function checkFileExist(targetPath: string) {
+    if (!device) {
+      return false
     }
-    const { name: baseName, ext } = splitPath(name)
-    return `${baseName} (copy)${ext}`
+    try {
+      await main.statFile(device.id, targetPath)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  async function getAvailableCopyName(
+    name: string,
+    isDir: boolean,
+    targetDir: string
+  ): Promise<string> {
+    let ext = ''
+    let base = name
+    if (!isDir) {
+      if (endWith(name.toLowerCase(), '.tar.gz')) {
+        base = name.slice(0, -7)
+        ext = '.tar.gz'
+      } else {
+        const parts = splitPath(name)
+        base = parts.name
+        ext = parts.ext
+      }
+    }
+
+    const copyRegex = /^(.*?)\s\(copy(?:\s(\d+))?\)$/
+    const match = base.match(copyRegex)
+    let prefix = base
+    let num = 1
+    if (match) {
+      prefix = match[1]
+      num = match[2] ? parseInt(match[2], 10) + 1 : 2
+    }
+
+    while (true) {
+      const suffix = num === 1 ? ' (copy)' : ` (copy ${num})`
+      const candidate = `${prefix}${suffix}${ext}`
+      const exists =
+        targetDir === path
+          ? fileExist(candidate)
+          : await checkFileExist(targetDir + candidate)
+      if (!exists) {
+        return candidate
+      }
+      num++
+    }
   }
 
   function stageClipboard(action: 'copy' | 'cut', targetFile: IFile) {
@@ -135,12 +180,7 @@ export default observer(function File() {
     if (targetDir === path) {
       targetExists = fileExist(finalDestName)
     } else {
-      try {
-        await main.statFile(device.id, destPath)
-        targetExists = true
-      } catch {
-        targetExists = false
-      }
+      targetExists = await checkFileExist(destPath)
     }
 
     if (targetExists) {
@@ -148,7 +188,11 @@ export default observer(function File() {
         t('overwriteConfirm', { name: finalDestName })
       )
       if (!overwrite) {
-        const defaultCopyName = getCopyName(finalDestName, clipFile.directory)
+        const defaultCopyName = await getAvailableCopyName(
+          finalDestName,
+          clipFile.directory,
+          targetDir
+        )
         const newName = await LunaModal.prompt(
           t(clipFile.directory ? 'newFolderName' : 'newFileName'),
           defaultCopyName
@@ -224,8 +268,9 @@ export default observer(function File() {
       return
     }
 
-    const prevDimmed = container.querySelectorAll(`.${Style.cutItem}`)
-    prevDimmed.forEach((el) => el.classList.remove(Style.cutItem))
+    const cutClass = Style.cutItem || 'cut-item'
+    const prevDimmed = container.querySelectorAll(`.${cutClass}`)
+    prevDimmed.forEach((el) => el.classList.remove(cutClass))
 
     if (
       file.clipboard &&
@@ -242,7 +287,7 @@ export default observer(function File() {
           item.querySelector('.luna-data-grid-cell') ||
           item
         if (nameEl && nameEl.textContent?.trim() === cutName) {
-          item.classList.add(Style.cutItem)
+          item.classList.add(cutClass)
         }
       })
     }

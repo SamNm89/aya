@@ -19,8 +19,10 @@
   background: var(--color-primary-bg);
 }
 
-.cut-item {
+.cut-item,
+.cutItem {
   opacity: 0.45;
+  filter: grayscale(0.4);
   transition: opacity 0.2s ease;
 }
 
