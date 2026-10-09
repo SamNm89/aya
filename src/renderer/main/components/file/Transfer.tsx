@@ -24,7 +24,11 @@ export default observer(function Transfer() {
       name: transfer.name,
       id: transfer.id,
       type:
-        transfer.type === TransferType.Download ? t('download') : t('upload'),
+        transfer.type === TransferType.Download
+          ? t('download')
+          : transfer.type === TransferType.Copy
+          ? t('copy')
+          : t('upload'),
       source: transfer.src,
       destination: transfer.dest,
       duration: durationFormat(Math.round(transfer.duration), 'h:m:s:l'),

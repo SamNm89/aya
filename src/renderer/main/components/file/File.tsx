@@ -44,14 +44,16 @@ export default observer(function File() {
     go('/')
   }, [])
 
-  async function getFiles(path: string) {
+  const iconCacheRef = useRef<Map<string, string>>(new Map())
+
+  async function getFiles(targetPath: string) {
     if (device) {
-      const files: IFile[] = await main.readDir(device.id, path)
+      const files: IFile[] = await main.readDir(device.id, targetPath)
       for (let i = 0, len = files.length; i < len; i++) {
-        const file = files[i]
-        if (!file.directory) {
-          const ext = splitPath(file.name).ext
-          const type = file.mime
+        const item = files[i]
+        if (!item.directory) {
+          const ext = splitPath(item.name).ext
+          const type = item.mime
           if (
             !type ||
             (!startWith(type, 'image') &&
@@ -59,13 +61,19 @@ export default observer(function File() {
               !startWith(type, 'video') &&
               !startWith(type, 'audio'))
           ) {
-            file.thumbnail = await main.getFileIcon(ext)
+            if (iconCacheRef.current.has(ext)) {
+              item.thumbnail = iconCacheRef.current.get(ext)
+            } else {
+              const icon = await main.getFileIcon(ext)
+              iconCacheRef.current.set(ext, icon)
+              item.thumbnail = icon
+            }
           }
         }
       }
-      setPath(path)
-      setCustomPath(path)
-      setFileList(files)
+      setPath(targetPath)
+      setCustomPath(targetPath)
+      setFileList([...files])
       setFilter('')
     }
   }
@@ -148,6 +156,55 @@ export default observer(function File() {
     )
   }
 
+  function promptFileConflict(
+    name: string
+  ): Promise<'overwrite' | 'rename' | 'cancel'> {
+    return new Promise((resolve) => {
+      const container = document.createElement('div')
+      document.body.appendChild(container)
+      const modal = new LunaModal(container, {
+        title: t('fileConflict'),
+        content: t('fileConflictMsg', { name }),
+        showClose: false,
+      })
+
+      const footer = document.createElement('div')
+      footer.className = 'luna-modal-button-group'
+
+      let resolved = false
+      function cleanup(result: 'overwrite' | 'rename' | 'cancel') {
+        if (resolved) return
+        resolved = true
+        modal.hide()
+        modal.destroy()
+        container.remove()
+        resolve(result)
+      }
+
+      const cancelBtn = document.createElement('div')
+      cancelBtn.className = 'luna-modal-button luna-modal-secondary'
+      cancelBtn.textContent = t('cancel')
+      cancelBtn.onclick = () => cleanup('cancel')
+
+      const renameBtn = document.createElement('div')
+      renameBtn.className = 'luna-modal-button luna-modal-secondary'
+      renameBtn.textContent = t('rename')
+      renameBtn.onclick = () => cleanup('rename')
+
+      const overwriteBtn = document.createElement('div')
+      overwriteBtn.className = 'luna-modal-button luna-modal-primary'
+      overwriteBtn.textContent = t('overwrite')
+      overwriteBtn.onclick = () => cleanup('overwrite')
+
+      footer.appendChild(cancelBtn)
+      footer.appendChild(renameBtn)
+      footer.appendChild(overwriteBtn)
+
+      modal.setOption('footer', footer)
+      modal.show()
+    })
+  }
+
   async function pasteFiles(targetDir: string) {
     if (!device || !file.clipboard) {
       return
@@ -184,10 +241,11 @@ export default observer(function File() {
     }
 
     if (targetExists) {
-      const overwrite = await LunaModal.confirm(
-        t('overwriteConfirm', { name: finalDestName })
-      )
-      if (!overwrite) {
+      const conflictAction = await promptFileConflict(finalDestName)
+      if (conflictAction === 'cancel') {
+        return
+      }
+      if (conflictAction === 'rename') {
         const defaultCopyName = await getAvailableCopyName(
           finalDestName,
           clipFile.directory,
@@ -198,6 +256,14 @@ export default observer(function File() {
           defaultCopyName
         )
         if (!newName || newName === finalDestName) {
+          return
+        }
+        const newExists =
+          targetDir === path
+            ? fileExist(newName)
+            : await checkFileExist(targetDir + newName)
+        if (newExists) {
+          notify(t('fileExistErr', { name: newName }), { icon: 'error' })
           return
         }
         finalDestName = newName
@@ -213,9 +279,10 @@ export default observer(function File() {
         file.setClipboard(null)
       }
       notify(t('filePasted', { name: finalDestName }), { icon: 'success' })
-      await getFiles(path)
     } catch {
       notify(t('pasteErr'), { icon: 'error' })
+    } finally {
+      await getFiles(path)
     }
   }
 
@@ -417,7 +484,7 @@ export default observer(function File() {
               } else {
                 await main.deleteFile(device.id, filePath)
               }
-              getFiles(path)
+              await getFiles(path)
             }
           },
         },
@@ -434,7 +501,7 @@ export default observer(function File() {
                 return
               }
               await main.moveFile(device.id, path + fileItem.name, path + name)
-              getFiles(path)
+              await getFiles(path)
             }
           },
         }
@@ -464,7 +531,7 @@ export default observer(function File() {
             const name = await LunaModal.prompt(t('newFolderName'))
             if (name) {
               await main.createDir(device.id, path + name)
-              getFiles(path)
+              await getFiles(path)
             }
           },
         },

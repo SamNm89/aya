@@ -66,6 +66,7 @@ export interface IProcess {
 export enum TransferType {
   Upload,
   Download,
+  Copy,
 }
 
 export type IpcGetFps = (deviceId: string, pkg: string) => Promise<number>

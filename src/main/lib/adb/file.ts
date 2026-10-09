@@ -12,6 +12,7 @@ import contain from 'licia/contain'
 import trim from 'licia/trim'
 import each from 'licia/each'
 import uuid from 'licia/uuid'
+import isStr from 'licia/isStr'
 import { getPackages } from './package'
 import {
   IFile,
@@ -222,7 +223,53 @@ const moveFile: IpcMoveFile = async function (deviceId, src, dest) {
 }
 
 const copyFile: IpcCopyFile = async function (deviceId, src, dest) {
-  await fileShell(deviceId, 'cp -r', src, dest)
+  let size = 0
+  try {
+    const stat = await statFile(deviceId, src)
+    size = stat.size || 0
+  } catch {}
+
+  const id = uuid()
+  window.sendTo(
+    'main',
+    'startTransfer',
+    id,
+    TransferType.Copy,
+    src,
+    dest,
+    size
+  )
+
+  let timer: any = null
+  if (size > 0) {
+    timer = setInterval(async () => {
+      try {
+        const destStat = await statFile(deviceId, dest)
+        if (destStat && destStat.size) {
+          window.sendTo('main', 'updateTransfer', id, destStat.size)
+        }
+      } catch {}
+    }, 500)
+  }
+
+  try {
+    const res = await fileShell(deviceId, 'cp -r', src, dest)
+    if (
+      res &&
+      isStr(res) &&
+      ((startWith(res, 'cp:') && contain(res, 'failed')) ||
+        contain(res, 'Permission denied') ||
+        contain(res, 'No such file'))
+    ) {
+      throw new Error(res)
+    }
+    window.sendTo('main', 'updateTransfer', id, size)
+  } finally {
+    if (timer) {
+      clearInterval(timer)
+    }
+    window.sendTo('main', 'finishTransfer', id)
+  }
 }
 
 const readDir: IpcReadDir = async function (deviceId, path) {
