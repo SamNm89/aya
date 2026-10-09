@@ -36,6 +36,7 @@ export default observer(function File() {
   const [selected, setSelected] = useState<IFile | undefined>()
   const [selectedUrl, setSelectedUrl] = useState<string>('')
   const draggingRef = useRef(0)
+  const listContainerRef = useRef<HTMLDivElement>(null)
 
   const { device, file } = store
 
@@ -78,6 +79,174 @@ export default observer(function File() {
 
     return false
   }
+
+  function getCopyName(name: string, isDir: boolean) {
+    if (isDir) {
+      return `${name} (copy)`
+    }
+    const { name: baseName, ext } = splitPath(name)
+    return `${baseName} (copy)${ext}`
+  }
+
+  function stageClipboard(action: 'copy' | 'cut', targetFile: IFile) {
+    file.setClipboard({
+      action,
+      file: targetFile,
+      srcPath: path + targetFile.name,
+      parentPath: path,
+    })
+    notify(
+      t(action === 'copy' ? 'fileCopied' : 'fileCut', {
+        name: targetFile.name,
+      }),
+      { icon: 'success' }
+    )
+  }
+
+  async function pasteFiles(targetDir: string) {
+    if (!device || !file.clipboard) {
+      return
+    }
+
+    const { action, file: clipFile, srcPath, parentPath } = file.clipboard
+    const sourceName = clipFile.name
+
+    if (!endWith(targetDir, '/')) {
+      targetDir = targetDir + '/'
+    }
+
+    if (clipFile.directory) {
+      const srcDir = endWith(srcPath, '/') ? srcPath : srcPath + '/'
+      if (startWith(targetDir, srcDir)) {
+        notify(t('invalidPasteTarget'), { icon: 'error' })
+        return
+      }
+    }
+
+    if (action === 'cut' && targetDir === parentPath) {
+      notify(t('sameLocationErr'), { icon: 'info' })
+      return
+    }
+
+    let finalDestName = sourceName
+
+    const destPath = targetDir + finalDestName
+    let targetExists = false
+    if (targetDir === path) {
+      targetExists = fileExist(finalDestName)
+    } else {
+      try {
+        await main.statFile(device.id, destPath)
+        targetExists = true
+      } catch {
+        targetExists = false
+      }
+    }
+
+    if (targetExists) {
+      const overwrite = await LunaModal.confirm(
+        t('overwriteConfirm', { name: finalDestName })
+      )
+      if (!overwrite) {
+        const defaultCopyName = getCopyName(finalDestName, clipFile.directory)
+        const newName = await LunaModal.prompt(
+          t(clipFile.directory ? 'newFolderName' : 'newFileName'),
+          defaultCopyName
+        )
+        if (!newName || newName === finalDestName) {
+          return
+        }
+        finalDestName = newName
+      }
+    }
+
+    try {
+      const finalDestPath = targetDir + finalDestName
+      if (action === 'copy') {
+        await main.copyFile(device.id, srcPath, finalDestPath)
+      } else if (action === 'cut') {
+        await main.moveFile(device.id, srcPath, finalDestPath)
+        file.setClipboard(null)
+      }
+      notify(t('filePasted', { name: finalDestName }), { icon: 'success' })
+      await getFiles(path)
+    } catch {
+      notify(t('pasteErr'), { icon: 'error' })
+    }
+  }
+
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      const target = e.target as HTMLElement
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.isContentEditable)
+      ) {
+        return
+      }
+
+      const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0
+      const modifier = isMac ? e.metaKey : e.ctrlKey
+
+      if (!modifier) {
+        return
+      }
+
+      if (e.key === 'c' || e.key === 'C') {
+        if (selected) {
+          e.preventDefault()
+          stageClipboard('copy', selected)
+        }
+      } else if (e.key === 'x' || e.key === 'X') {
+        if (selected) {
+          e.preventDefault()
+          stageClipboard('cut', selected)
+        }
+      } else if (e.key === 'v' || e.key === 'V') {
+        if (file.clipboard) {
+          e.preventDefault()
+          pasteFiles(path)
+        }
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [selected, path, file.clipboard, device])
+
+  useEffect(() => {
+    const container = listContainerRef.current
+    if (!container) {
+      return
+    }
+
+    const prevDimmed = container.querySelectorAll(`.${Style.cutItem}`)
+    prevDimmed.forEach((el) => el.classList.remove(Style.cutItem))
+
+    if (
+      file.clipboard &&
+      file.clipboard.action === 'cut' &&
+      file.clipboard.parentPath === path
+    ) {
+      const cutName = file.clipboard.file.name
+      const items = container.querySelectorAll(
+        '.luna-icon-list-item, .luna-data-grid-node'
+      )
+      items.forEach((item) => {
+        const nameEl =
+          item.querySelector('.luna-icon-list-name') ||
+          item.querySelector('.luna-data-grid-cell') ||
+          item
+        if (nameEl && nameEl.textContent?.trim() === cutName) {
+          item.classList.add(Style.cutItem)
+        }
+      })
+    }
+  }, [file.clipboard, fileList, path, file.listView])
 
   async function back() {
     if (historyIdx <= 0) {
@@ -135,16 +304,16 @@ export default observer(function File() {
     main.openFile(device.id, path + file.name)
   }
 
-  function onContextMenu(e: MouseEvent, file?: IFile) {
+  function onContextMenu(e: MouseEvent, fileItem?: IFile) {
     if (!device) {
       return
     }
 
-    if (file) {
+    if (fileItem) {
       const template: any[] = [
         {
           label: t('open'),
-          click: () => open(file),
+          click: () => open(fileItem),
         },
         {
           label: t('download'),
@@ -155,11 +324,11 @@ export default observer(function File() {
             if (canceled) {
               return
             }
-            const dest = filePaths[0] + '/' + file.name
-            notify(t('fileDownloading', { path: path + file.name }), {
+            const dest = filePaths[0] + '/' + fileItem.name
+            notify(t('fileDownloading', { path: path + fileItem.name }), {
               icon: 'info',
             })
-            await main.pullFile(device.id, path + file.name, dest)
+            await main.pullFile(device.id, path + fileItem.name, dest)
             notify(t('fileDownloaded', { path: dest }), {
               icon: 'success',
               duration: 5000,
@@ -170,14 +339,35 @@ export default observer(function File() {
           type: 'separator',
         },
         {
+          label: t('copy'),
+          click: () => stageClipboard('copy', fileItem),
+        },
+        {
+          label: t('cut'),
+          click: () => stageClipboard('cut', fileItem),
+        },
+      ]
+
+      if (fileItem.directory && file.clipboard) {
+        template.push({
+          label: t('paste'),
+          click: () => pasteFiles(path + fileItem.name + '/'),
+        })
+      }
+
+      template.push(
+        {
+          type: 'separator',
+        },
+        {
           label: t('delete'),
           click: async () => {
             const result = await LunaModal.confirm(
-              t('deleteFileConfirm', { name: file.name })
+              t('deleteFileConfirm', { name: fileItem.name })
             )
             if (result) {
-              const filePath = path + file.name
-              if (file.directory) {
+              const filePath = path + fileItem.name
+              if (fileItem.directory) {
                 await main.deleteDir(device.id, filePath)
               } else {
                 await main.deleteFile(device.id, filePath)
@@ -190,23 +380,35 @@ export default observer(function File() {
           label: t('rename'),
           click: async () => {
             const name = await LunaModal.prompt(
-              t(file.directory ? 'newFolderName' : 'newFileName'),
-              file.name
+              t(fileItem.directory ? 'newFolderName' : 'newFileName'),
+              fileItem.name
             )
-            if (name && name !== file.name) {
+            if (name && name !== fileItem.name) {
               if (fileExist(name)) {
                 notify(t('fileExistErr', { name }), { icon: 'error' })
                 return
               }
-              await main.moveFile(device.id, path + file.name, path + name)
+              await main.moveFile(device.id, path + fileItem.name, path + name)
               getFiles(path)
             }
           },
-        },
-      ]
+        }
+      )
       contextMenu(e, template)
     } else {
-      const template: any[] = [
+      const template: any[] = []
+
+      if (file.clipboard) {
+        template.push({
+          label: t('paste'),
+          click: () => pasteFiles(path),
+        })
+        template.push({
+          type: 'separator',
+        })
+      }
+
+      template.push(
         {
           label: t('upload'),
           click: uploadFiles,
@@ -224,8 +426,8 @@ export default observer(function File() {
         {
           label: t('refresh'),
           click: () => getFiles(path),
-        },
-      ]
+        }
+      )
       contextMenu(e, template)
     }
   }
@@ -392,6 +594,7 @@ export default observer(function File() {
           <LunaSplitPane onResize={(weights) => file.set('weights', weights)}>
             <LunaSplitPaneItem minSize={400} weight={file.weights[0]}>
               <div
+                ref={listContainerRef}
                 onDrop={onDrop}
                 onDragEnter={() => {
                   draggingRef.current++

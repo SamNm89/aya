@@ -19,6 +19,11 @@
   background: var(--color-primary-bg);
 }
 
+.cut-item {
+  opacity: 0.45;
+  transition: opacity 0.2s ease;
+}
+
 .transfer {
   border-top: 1px solid var(--color-border);
 }

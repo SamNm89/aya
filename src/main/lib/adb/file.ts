@@ -15,6 +15,7 @@ import uuid from 'licia/uuid'
 import { getPackages } from './package'
 import {
   IFile,
+  IpcCopyFile,
   IpcCreateDir,
   IpcDeleteDir,
   IpcDeleteFile,
@@ -220,6 +221,10 @@ const moveFile: IpcMoveFile = async function (deviceId, src, dest) {
   await fileShell(deviceId, 'mv', src, dest)
 }
 
+const copyFile: IpcCopyFile = async function (deviceId, src, dest) {
+  await fileShell(deviceId, 'cp -r', src, dest)
+}
+
 const readDir: IpcReadDir = async function (deviceId, path) {
   if (startWith(path, '/data/') && !startWith(path, '/data/local/tmp/')) {
     if (!(await isRooted(deviceId))) {
@@ -398,7 +403,7 @@ async function fileShell(
     }
   }
 
-  return shell(deviceId, `${cmd} "${path}"`)
+  return shell(deviceId, `${cmd} "${path}"${dest ? ` "${dest}"` : ''}`)
 }
 
 const statFile: IpcStatFile = async function (deviceId, path) {
@@ -440,5 +445,6 @@ export async function init(c: Client) {
   handleEvent('deleteDir', deleteDir)
   handleEvent('createDir', createDir)
   handleEvent('moveFile', moveFile)
+  handleEvent('copyFile', copyFile)
   handleEvent('statFile', statFile)
 }
